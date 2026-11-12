@@ -195,14 +195,20 @@ Cancellation or a write/packaging error removes the incomplete run directory; it
 does not leave a completed-looking ZIP. A successful run is written under
 `<Pictures>/PixelMathExperiments/<experiment_name>/<unique-run-id>/`. Windows'
 Pictures known folder is used when available; otherwise the fallback is
-`Path.home() / "Pictures"`. Each run receives a new directory and never overwrites
-an earlier one. The source photograph is not copied into the output.
+`Path.home() / "Pictures"`. Each run receives a new, unique directory. Starting a
+new run with the same experiment name removes previous recorder-generated run
+directories for that name before creating the new run;
+unrelated files in its parent folder are left untouched. If the Pictures or
+`PixelMathExperiments` folder was deleted, the recorder recreates it when writing
+results. The source photograph is not copied into the output.
 
 PNG snapshots use the original-color ROI as their base, overlay tracked, newly
 admitted, and boundary pixels with the existing Stage 1E colors, and include a
 measurement label and legend. Their pixel scale is selected from the ROI size and
 is independent of the app zoom, operating-system display scaling, and window size.
-No missing strokes are generated.
+No missing strokes are generated. With `auto_zoom=true`, the on-screen ROI is
+enlarged to the largest continuous magnification that fits inside Pixel Analysis
+(up to 64×), rather than rounding down to a whole-number zoom.
 
 ## Stage 1F: Logical Shape Grouping Lab
 

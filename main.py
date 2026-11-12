@@ -113,6 +113,31 @@ def next_zoom_level(current: float, direction: int) -> float:
     return ZOOM_LEVELS[max(index, 0)]
 
 
+def fit_zoom_to_roi(
+    roi: Roi,
+    viewport_size: tuple[int, int],
+    margin: int = 24,
+    maximum_zoom: float = 64.0,
+) -> float:
+    left, top, right, bottom = roi
+    viewport_width, viewport_height = viewport_size
+    roi_width, roi_height = right - left, bottom - top
+    if roi_width <= 0 or roi_height <= 0:
+        raise ValueError("ROI must have a positive width and height.")
+    if viewport_width <= 0 or viewport_height <= 0:
+        raise ValueError("Viewport dimensions must be positive.")
+    if margin < 0 or maximum_zoom <= 0:
+        raise ValueError("Margin must be nonnegative and maximum zoom positive.")
+
+    available_width = max(1, viewport_width - margin)
+    available_height = max(1, viewport_height - margin)
+    return min(
+        maximum_zoom,
+        available_width / roi_width,
+        available_height / roi_height,
+    )
+
+
 class PixelMathRecognitionLab:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -2152,15 +2177,9 @@ class PixelMathRecognitionLab:
         image_width, image_height = self.rgb_image.size
         left, top, right, bottom = roi
         if auto_zoom:
-            roi_width, roi_height = right - left, bottom - top
-            fit_scale = min(
-                max(1, canvas_width - 24) / roi_width,
-                max(1, canvas_height - 24) / roi_height,
-            )
-            self.zoom = (
-                float(min(64, max(1, int(fit_scale))))
-                if fit_scale >= 1
-                else max(0.01, fit_scale)
+            self.zoom = fit_zoom_to_roi(
+                roi,
+                (canvas_width, canvas_height),
             )
             self.zoom_label.configure(text=f"{self.zoom:g}×")
             self._render_analysis()
