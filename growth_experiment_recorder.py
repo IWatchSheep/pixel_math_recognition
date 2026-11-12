@@ -32,6 +32,7 @@ from threshold_growth_instructions import (
 
 ProgressCallback = Callable[[int, int, str], None]
 _SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}\Z")
+_RUN_DIRECTORY_NAME = re.compile(r"\d{8}_\d{6}_\d{6}_\d{3}\Z")
 _MAX_SNAPSHOT_SIDE = 2400
 _MAX_SNAPSHOT_SCALE = 12
 
@@ -88,6 +89,23 @@ def _unique_run_directory(output_root: Path, experiment_name: str) -> Path:
             continue
         return run_directory
     raise FileExistsError("Could not create a unique experiment output directory.")
+
+
+def _clear_previous_run_directories(output_root: Path, experiment_name: str) -> None:
+    if not _SAFE_NAME.fullmatch(experiment_name):
+        raise ValueError("Unsafe experiment name.")
+    parent = output_root / experiment_name
+    if parent.is_symlink():
+        raise OSError(f"Experiment output directory must not be a symbolic link: {parent}")
+    if not parent.exists():
+        return
+    for previous_run in parent.iterdir():
+        if (
+            _RUN_DIRECTORY_NAME.fullmatch(previous_run.name)
+            and previous_run.is_dir()
+            and not previous_run.is_symlink()
+        ):
+            shutil.rmtree(previous_run)
 
 
 def _boundary_pixels(frame: ThresholdGrowthFrame, image_size: tuple[int, int]) -> frozenset[tuple[int, int]]:
@@ -401,6 +419,7 @@ def record_threshold_growth_experiment(
     root = output_root or (pictures_directory() / "PixelMathExperiments")
     run_directory: Path | None = None
     try:
+        _clear_previous_run_directories(root, config.experiment_name)
         run_directory = _unique_run_directory(root, config.experiment_name)
         frames = experiment.history.frames
         manifest_rows: list[dict[str, object]] = []

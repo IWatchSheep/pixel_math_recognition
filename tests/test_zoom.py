@@ -1,6 +1,6 @@
 import unittest
 
-from main import next_zoom_level
+from main import fit_zoom_to_roi, next_zoom_level
 
 
 class ZoomLevelTests(unittest.TestCase):
@@ -32,6 +32,27 @@ class ZoomLevelTests(unittest.TestCase):
     def test_invalid_zoom_direction_is_rejected(self):
         with self.assertRaises(ValueError):
             next_zoom_level(1.0, 0)
+
+    def test_auto_zoom_uses_available_viewport_without_rounding_down(self):
+        roi = (649, 138, 677, 171)
+        viewport = (955, 685)
+
+        zoom = fit_zoom_to_roi(roi, viewport)
+
+        self.assertAlmostEqual(zoom, 661 / 33)
+        self.assertGreater(zoom, 16.0)
+        self.assertLessEqual((roi[2] - roi[0]) * zoom, viewport[0] - 24)
+        self.assertAlmostEqual((roi[3] - roi[1]) * zoom, viewport[1] - 24)
+
+    def test_auto_zoom_scales_down_to_fit_and_respects_zoom_cap(self):
+        self.assertAlmostEqual(fit_zoom_to_roi((0, 0, 100, 100), (500, 300)), 2.76)
+        self.assertEqual(fit_zoom_to_roi((0, 0, 2, 2), (1000, 1000)), 64.0)
+
+    def test_auto_zoom_rejects_empty_roi_or_viewport(self):
+        with self.assertRaises(ValueError):
+            fit_zoom_to_roi((2, 2, 2, 5), (500, 300))
+        with self.assertRaises(ValueError):
+            fit_zoom_to_roi((0, 0, 10, 10), (0, 300))
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from threading import Event
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -181,15 +182,43 @@ class GrowthExperimentRecorderTests(unittest.TestCase):
         self.assertEqual(first.width, 420)
         self.assertEqual(first.getpixel((4 * 12, 0)), self.rgb.getpixel((5, 1)))
 
-    def test_run_names_do_not_overwrite_prior_results(self):
+    def test_new_run_clears_previous_outputs_for_same_experiment_name(self):
         first = self._record()
         second = self._record()
 
         self.assertNotEqual(first.output_directory, second.output_directory)
         self.assertEqual(first.experiment.history, second.experiment.history)
         self.assertEqual(first.snapshot_files, second.snapshot_files)
-        self.assertTrue((first.output_directory / "results.zip").is_file())
+        self.assertFalse(first.output_directory.exists())
         self.assertTrue((second.output_directory / "results.zip").is_file())
+
+    def test_missing_pictures_folder_is_recreated_for_default_output(self):
+        pictures = self.output_root / "redirected" / "Pictures"
+        self.assertFalse(pictures.exists())
+
+        with patch("growth_experiment_recorder.pictures_directory", return_value=pictures):
+            result = record_threshold_growth_experiment(
+                configuration(),
+                self.rgb,
+                self.gray,
+            )
+
+        self.assertTrue((pictures / "PixelMathExperiments").is_dir())
+        self.assertTrue((result.output_directory / "results.zip").is_file())
+
+    def test_cleaning_previous_runs_preserves_unrelated_parent_files(self):
+        parent = self.output_root / "zero_01"
+        old_run = parent / "20261112_100000_123456_000"
+        old_run.mkdir(parents=True)
+        (old_run / "threshold_080.png").write_bytes(b"old")
+        notes = parent / "notes.txt"
+        notes.write_text("keep", encoding="utf-8")
+
+        result = self._record()
+
+        self.assertFalse(old_run.exists())
+        self.assertEqual(notes.read_text(encoding="utf-8"), "keep")
+        self.assertTrue((result.output_directory / "results.zip").is_file())
 
     def test_cancellation_removes_incomplete_run_directory(self):
         cancellation = Event()
