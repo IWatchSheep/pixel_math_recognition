@@ -46,6 +46,17 @@ class ThresholdGrowthInstructionsTests(unittest.TestCase):
         self.assertEqual(config.snapshot_mode, "on_change")
         self.assertEqual(config.experiment_name, "zero_01")
 
+    def test_auto_zoom_defaults_to_true_but_recording_remains_opt_in(self):
+        config = parse_threshold_growth_config(BASE_CONFIG, self.rgb.size)
+
+        self.assertTrue(config.auto_zoom)
+        self.assertFalse(config.auto_record)
+
+        config = parse_threshold_growth_config(
+            BASE_CONFIG + "auto_zoom=false\n", self.rgb.size
+        )
+        self.assertFalse(config.auto_zoom)
+
     def test_auto_record_and_recording_options_are_strictly_validated(self):
         with self.assertRaisesRegex(ValueError, "requires explicit seed"):
             parse_threshold_growth_config(

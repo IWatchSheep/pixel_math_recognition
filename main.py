@@ -2144,7 +2144,12 @@ class PixelMathRecognitionLab:
             self.experiment_status_label.configure(
                 text=(
                     f"Threshold growth complete for seed {config.seed}; "
-                    f"{len(self.sections)} connected sections found."
+                    f"{len(self.sections)} connected sections found. "
+                    + (
+                        "No files were saved; add auto_record=true to record this experiment."
+                        if not config.auto_record
+                        else "Recording output is being prepared."
+                    )
                 )
             )
             return
@@ -2156,13 +2161,16 @@ class PixelMathRecognitionLab:
         if section_count:
             status = (
                 f"Found {section_count} sections at threshold "
-                f"{config.brightness_threshold}. Select the intended section in "
-                "Connected Sections, then click Track Selected Section to run growth."
+                f"{config.brightness_threshold}; the ROI was fitted in Pixel Analysis. "
+                "No growth history or files were created because no seed was supplied. "
+                "Select a section and click Track Selected Section, or add seed_x, "
+                "seed_y, and auto_record=true to record."
             )
         else:
             status = (
                 f"No connected sections were found in the ROI at threshold "
-                f"{config.brightness_threshold}."
+                f"{config.brightness_threshold}; the ROI was fitted in Pixel Analysis. "
+                "No files were created."
             )
         self.status_label.configure(text=status)
         self.experiment_status_label.configure(text=status)

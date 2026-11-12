@@ -147,7 +147,9 @@ The **Experiment Instructions** box also accepts a `threshold_growth`
 configuration. ROI coordinates are half-open original-image pixels and are
 independent of canvas zoom or scroll position. Running a valid configuration sets
 the ROI and starting threshold, finds and lists the connected sections with their
-stable seed coordinates, and centers the analysis view on that ROI.
+stable seed coordinates, and centers the analysis view on that ROI. The ROI is
+automatically fitted to the Pixel Analysis viewport by default; set
+`auto_zoom=false` to keep the current zoom.
 
 ```text
 experiment=threshold_growth
@@ -171,16 +173,18 @@ analysis runs. Invalid pasted instructions are rejected before the current analy
 state is changed. Template-matching and logical-grouping configurations retain
 their separate existing formats.
 
-To record the run automatically, add an explicit seed and these optional fields:
+To save a recording, add an explicit seed and `auto_record=true`:
 
 ```text
 seed_x=899
 seed_y=137
 auto_record=true
-auto_zoom=true
 snapshot_mode=on_change
 experiment_name=zero_01
 ```
+
+Without both `auto_record=true` and explicit seed coordinates, the run only finds
+sections for interactive selection and does not create files in Pictures.
 
 `auto_record=true` processes the complete configured threshold series, saves a
 CSV row for every threshold, creates display-independent PNG snapshots when the

@@ -93,7 +93,7 @@ def parse_threshold_growth_config(
     if ("seed_x" in values) != ("seed_y" in values):
         raise ValueError("'seed_x' and 'seed_y' must be supplied together.")
     auto_record = _parse_boolean(values.get("auto_record", "false"), "auto_record")
-    auto_zoom = _parse_boolean(values.get("auto_zoom", "false"), "auto_zoom")
+    auto_zoom = _parse_boolean(values.get("auto_zoom", "true"), "auto_zoom")
     snapshot_mode = values.get("snapshot_mode", "on_change")
     if snapshot_mode != "on_change":
         raise ValueError("'snapshot_mode' must be 'on_change'.")
