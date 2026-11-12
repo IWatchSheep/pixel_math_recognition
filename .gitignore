@@ -7,3 +7,12 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Local secrets and private keys
+api_key*
+credentials.*
+secrets.*
+*.pem
+*.key
+*.p12
+*.pfx
