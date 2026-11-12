@@ -39,6 +39,14 @@ from growth_experiment_recorder import (
     RecordingCancelled,
     record_threshold_growth_experiment,
 )
+from attachment_aware_fitting import (
+    AttachmentAwareFitConfig,
+    AttachmentAwareFitResult,
+    AttachmentAwareRecordingResult,
+    parse_attachment_aware_fit_config,
+    record_attachment_aware_fit,
+    run_attachment_aware_fit,
+)
 from logical_grouping import (
     MAX_GROUPING_CANDIDATES,
     GroupingAnalysis,
@@ -930,6 +938,10 @@ class PixelMathRecognitionLab:
                 config = parse_logical_grouping_config(
                     instruction_text, self.rgb_image.size
                 )
+            elif experiment_name == "progressive_anchored_fit_b":
+                config = parse_attachment_aware_fit_config(
+                    instruction_text, self.rgb_image.size
+                )
             elif experiment_name == "progressive_anchored_fit":
                 config = parse_progressive_anchored_fit_config(
                     instruction_text, self.rgb_image.size
@@ -951,8 +963,14 @@ class PixelMathRecognitionLab:
         rgb_image = self.rgb_image
         grayscale_image = self.grayscale_image
         version = self._mask_version
-        is_stage_1g = isinstance(config, ProgressiveAnchoredFitConfig)
-        auto_record = getattr(config, "auto_record", False)
+        is_stage_1g_b = isinstance(config, AttachmentAwareFitConfig)
+        is_stage_1g = isinstance(
+            config, (ProgressiveAnchoredFitConfig, AttachmentAwareFitConfig)
+        )
+        if isinstance(config, AttachmentAwareFitConfig):
+            auto_record = config.base_config.auto_record
+        else:
+            auto_record = getattr(config, "auto_record", False)
         cancellation = Event() if (
             (isinstance(config, ThresholdGrowthConfig) and auto_record)
             or is_stage_1g
@@ -966,8 +984,12 @@ class PixelMathRecognitionLab:
         )
         self.experiment_status_label.configure(
             text=(
-                "Recording growth experiment…"
+                "Recording Stage 1G-B fitting…"
+                if cancellation is not None and auto_record and is_stage_1g_b
+                else "Recording growth experiment…"
                 if cancellation is not None and auto_record
+                else "Running Stage 1G-B fitting in background…"
+                if is_stage_1g_b
                 else "Running Stage 1G fitting in background…"
                 if is_stage_1g
                 else "Running experiment in background…"
@@ -1033,6 +1055,7 @@ class PixelMathRecognitionLab:
             | LogicalGroupingConfig
             | ThresholdGrowthConfig
             | ProgressiveAnchoredFitConfig
+            | AttachmentAwareFitConfig
         ),
         rgb_image: Image.Image,
         grayscale_image: Image.Image,
@@ -1045,6 +1068,8 @@ class PixelMathRecognitionLab:
         | AutomaticGrowthRecordingResult
         | ProgressiveAnchoredFitResult
         | ProgressiveAnchoredRecordingResult
+        | AttachmentAwareFitResult
+        | AttachmentAwareRecordingResult
     ):
         if experiment_name == "logical_grouping":
             if not isinstance(config, LogicalGroupingConfig):
@@ -1078,6 +1103,24 @@ class PixelMathRecognitionLab:
                     progress_callback=progress_callback,
                 )
             return run_progressive_anchored_fit(
+                config,
+                rgb_image,
+                grayscale_image,
+                cancel_event=cancel_event,
+                progress_callback=progress_callback,
+            )
+        if experiment_name == "progressive_anchored_fit_b":
+            if not isinstance(config, AttachmentAwareFitConfig):
+                raise TypeError("Stage 1G-B configuration was not parsed.")
+            if config.base_config.auto_record:
+                return record_attachment_aware_fit(
+                    config,
+                    rgb_image,
+                    grayscale_image,
+                    cancel_event=cancel_event,
+                    progress_callback=progress_callback,
+                )
+            return run_attachment_aware_fit(
                 config,
                 rgb_image,
                 grayscale_image,
@@ -2318,6 +2361,58 @@ class PixelMathRecognitionLab:
             "candidate's progressive fit; no candidate is declared recognized."
         )
 
+    def _install_attachment_aware_result(
+        self, result: AttachmentAwareFitResult
+    ) -> None:
+        source_image = self.rgb_image
+        grayscale_image = self.grayscale_image
+        if source_image is None or grayscale_image is None:
+            raise RuntimeError("The source image is no longer available.")
+        config = result.config.base_config
+        self._mask_version += 1
+        if self._mask_after_id is not None:
+            self.root.after_cancel(self._mask_after_id)
+            self._mask_after_id = None
+        self.roi = config.roi
+        self.threshold.set(config.start_threshold)
+        self.binary_mask = create_binary_mask(
+            grayscale_image, config.start_threshold
+        )
+        display_overlay = source_image.copy()
+        display_overlay.paste(
+            result.display_overlay, (config.roi[0], config.roi[1])
+        )
+        self.anchored_fit_overlay = display_overlay
+        self._clear_growth_history()
+        self._clear_logical_grouping()
+        self._reset_merge_tracking()
+        self._reset_template_match(
+            "Stage 1G-B compares independent attachment-loss-weight tracks."
+        )
+        self.roi_label.configure(text=f"ROI: {format_roi_coordinates(config.roi)}")
+        self.clear_roi_button.configure(state=tk.NORMAL)
+        self.find_button.configure(state=tk.NORMAL)
+        self.analyze_button.configure(state=tk.NORMAL)
+        self.view_mode.set("Stage 1G Fit")
+        self._render_analysis()
+        self._center_analysis_on_roi(config.roi, auto_zoom=True)
+        final_lines = []
+        for digit in config.candidate_digits:
+            for weight in result.config.attachment_loss_weights:
+                frame = result.frames_for(digit, weight)[-1]
+                final_lines.append(
+                    f"{digit} (weight {weight:g}): {len(frame.matched_pixels)} matches; "
+                    f"{len(frame.lost_attachments)} lost at final threshold."
+                )
+        self.experiment_results_label.configure(
+            text="Stage 1G-B final attachment counts (comparisons, not recognition):\n"
+            + "\n".join(final_lines)
+        )
+        self.status_label.configure(
+            text="Stage 1G-B complete. The displayed overlay is the first candidate's "
+            "zero-weight baseline; no candidate is declared recognized."
+        )
+
     def _center_analysis_on_roi(self, roi: Roi, auto_zoom: bool = False) -> None:
         if self.rgb_image is None:
             return
@@ -2912,6 +3007,22 @@ class PixelMathRecognitionLab:
                         text=(
                             f"Recording complete: {result.output_directory} "
                             f"({len(result.snapshot_files)} snapshots)."
+                        )
+                    )
+                elif isinstance(result, AttachmentAwareRecordingResult):
+                    self._install_attachment_aware_result(result.experiment)
+                    self.experiment_status_label.configure(
+                        text=(
+                            f"Stage 1G-B recording complete: {result.output_directory} "
+                            f"({result.overlay_count} candidate/weight overlays)."
+                        )
+                    )
+                elif isinstance(result, AttachmentAwareFitResult):
+                    self._install_attachment_aware_result(result)
+                    self.experiment_status_label.configure(
+                        text=(
+                            "Stage 1G-B complete without saving files. Add "
+                            "auto_record=true to create overlays and reports."
                         )
                     )
                 elif isinstance(result, ProgressiveAnchoredRecordingResult):

@@ -377,6 +377,67 @@ comparison only: no winning digit or character recognition is reported. Each
 reference configuration must be run independently; the program does not use the
 known identity of either photographed zero.
 
+## Stage 1G-B: Attachment-Aware Progressive Fitting
+
+Stage 1G-B is a separately selected `experiment=progressive_anchored_fit_b` mode.
+It uses the same threshold growth, 5×7 templates, centered initial placement,
+nearest-neighbor rasterization, ordered coordinate search, and transform limits as
+Stage 1G. Each candidate/weight pair has an independent transform and attachment
+history. Include weight `0` to reproduce the Stage 1G progressive baseline; the
+other values are not automatically tuned.
+
+At each later threshold a candidate transform is scored using
+`IoU - transform_penalty - attachment_loss_weight * lost_previous_matches / max(1, previous_match_count)`.
+Both IoU and the attachment-loss fraction are dimensionless values in `[0, 1]`;
+the weight is a configurable non-negative finite multiplier on that same scale.
+Losses compare original-image coordinates from the immediately preceding threshold
+with coordinates matched by the proposed transform. The first threshold has no
+previous attachments and therefore incurs no attachment penalty. Ties use the
+existing Stage 1G ordering. This discourages losing matches but does not guarantee
+that a fit with no losses is a good fit.
+
+The first proposed controlled comparison can use this complete configuration:
+
+```text
+experiment=progressive_anchored_fit_b
+roi_left=543
+roi_top=34
+roi_right=588
+roi_bottom=90
+seed_x=572
+seed_y=44
+brightness_threshold=80
+maximum_threshold=130
+threshold_increment=1
+background_limit_percent=100
+candidate_digits=0,6,8,9
+initial_offset_x=0
+initial_offset_y=0
+initial_rotation_degrees=0
+initial_width_scale=1.0
+initial_height_scale=1.0
+step_translation_pixels=1
+cumulative_translation_pixels=3
+step_rotation_degrees=5
+cumulative_rotation_degrees=15
+step_scale=0.05
+cumulative_scale=0.15
+attachment_loss_weights=0,0.02,0.05,0.10
+auto_record=true
+experiment_name=stage_1g_b_attachment_aware
+```
+
+With `auto_record=true`, results are written under
+`<Pictures>/PixelMathExperiments/stage_1g_b_attachment_aware/<unique-run-id>/`,
+separate from Stage 1G recordings. Each run includes `fitting_history.csv` with
+per-threshold transforms, score parts, original-coordinate attachment sets,
+retention fractions, cumulative gained/lost coordinates and counts, threshold
+growth sets, and bound hits; `growth_measurements.csv`; `weight_comparisons.csv`;
+an overlay per candidate/weight/threshold; `experiment_settings.txt`; and
+`results.zip`. `newly_selected_pixels` and `newly_connected_pixels` are photographic
+threshold-growth measurements, distinct from gained template attachments. A
+previously lost coordinate that matches again is gained again, not retained.
+
 ## Tests
 
 ```powershell
@@ -397,6 +458,9 @@ or OCR/AI dependencies.
   transforms and records attachment history; a higher overlap is not recognition,
   and the starter templates may not resemble the handwriting or discriminate
   between digits.
+- Stage 1G-B adds an attachment-loss preference to that fitting objective, but a
+  lower loss count alone is not evidence of a better digit fit; compare it alongside
+  IoU, transform changes, and the complete threshold history.
 - Threshold analysis uses fixed values 40, 80, 120, 160, 200, and 240 and does not
   recommend a threshold.
 - Very large images still require memory for their RGB, grayscale, and mask data;
