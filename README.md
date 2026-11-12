@@ -106,7 +106,8 @@ modify the source image or template.
 ## Paste-and-run experiment box
 
 The **Experiment Instructions** panel accepts the documented `key=value` formats
-for `template_auto_align`, `logical_grouping`, and `threshold_growth`. Use **Load
+for `template_auto_align`, `logical_grouping`, `threshold_growth`, and
+`progressive_anchored_fit`. Use **Load
 Example** to fill in a sample without running it; **Run Experiment** validates the
 complete configuration and then runs the current image analysis on a worker thread.
 Template names are `digit_5x7`,
@@ -114,9 +115,11 @@ Template names are `digit_5x7`,
 unknown, malformed, or out-of-range values and requires an in-bounds, non-empty
 half-open ROI. The box is treated strictly as data; it cannot load files or run
 code. Invalid configurations leave the prior experiment results and analysis
-settings unchanged. Successful results update the ROI, threshold, template view,
-and report with initial/final IoU, offsets, scales, overlap counts, and image
-dimensions. No files are written.
+settings unchanged. If validation or a running experiment fails, the panel shows
+the exception and traceback in a selectable error-details box; **Copy Error
+Details** copies the complete text for sharing. Successful results update the ROI,
+threshold, template view, and report with initial/final IoU, offsets, scales,
+overlap counts, and image dimensions. No files are written.
 
 ## Stage 1E: threshold growth history
 
@@ -266,6 +269,114 @@ leftmost currently detected sections, using real seed pixels; review all generat
 seeds and group labels before running. Invalid text leaves the current experiment
 state unchanged, and the text box never executes code.
 
+## Stage 1G: Progressive Anchored Template Fitting
+
+Paste an `experiment=progressive_anchored_fit` configuration into **Experiment
+Instructions** and run it against the loaded photograph. Stage 1G reuses the
+manually drawn 5×7 templates for `0`, `6`, `8`, and `9` from
+`template_matching.py`; these are illustrative binary shapes, not learned or
+photograph-specific templates. The required seed must be selected at the starting
+threshold. The supplied zero reference cases are separate runs with their own
+explicit ROI and seed:
+
+```text
+experiment=progressive_anchored_fit
+roi_left=895
+roi_top=112
+roi_right=926
+roi_bottom=151
+seed_x=899
+seed_y=137
+brightness_threshold=80
+maximum_threshold=160
+threshold_increment=1
+background_limit_percent=100
+candidate_digits=0,6,8,9
+initial_offset_x=0
+initial_offset_y=0
+initial_rotation_degrees=0
+initial_width_scale=1.0
+initial_height_scale=1.0
+step_translation_pixels=1
+cumulative_translation_pixels=3
+step_rotation_degrees=5
+cumulative_rotation_degrees=15
+step_scale=0.05
+cumulative_scale=0.15
+auto_record=true
+experiment_name=zero_reference_1
+```
+
+For the second reference, use this complete configuration instead:
+
+```text
+experiment=progressive_anchored_fit
+roi_left=859
+roi_top=111
+roi_right=891
+roi_bottom=149
+seed_x=863
+seed_y=140
+brightness_threshold=80
+maximum_threshold=160
+threshold_increment=1
+background_limit_percent=100
+candidate_digits=0,6,8,9
+initial_offset_x=0
+initial_offset_y=0
+initial_rotation_degrees=0
+initial_width_scale=1.0
+initial_height_scale=1.0
+step_translation_pixels=1
+cumulative_translation_pixels=3
+step_rotation_degrees=5
+cumulative_rotation_degrees=15
+step_scale=0.05
+cumulative_scale=0.15
+auto_record=true
+experiment_name=zero_reference_2
+```
+
+Both fitting methods for each digit start with the exact same configured offset,
+rotation, and independent width/height scales. The fixed method never changes that
+transform. The progressive method uses a deterministic, ordered coordinate search
+at each later threshold, testing the current value and one positive/negative step
+for X, Y, rotation, width, and height, in that order. Its score is binary IoU minus
+penalties of 0.002 per source-pixel offset, 0.0005 per degree, and 0.05 per unit
+scale deviation from the initial transform. Ties prefer higher IoU, the smaller
+single-step change, then canonical Y, X, rotation, width, and height values. Each
+step and cumulative bound is enforced independently for both axes/scales relative
+to the initial transform; there is no unrestricted jump or stretch. Scale limits
+are deviations from each configured initial scale.
+
+At each threshold the tracked component is fitted separately to each template.
+Matched pixels are component pixels covered by the template; unmatched photographed
+pixels are tracked-component pixels outside it; unsupported template pixels are
+foreground template pixels outside the tracked component. Every attachment set is
+stored in original-image coordinates. Retained is the intersection of the previous
+threshold's current attachments with the current set; gained and lost are the
+current-minus-previous and previous-minus-current sets. Thus a pixel that returns
+after being lost is gained again, not continuously retained. Newly threshold-selected
+pixels are computed across the ROI; newly connected pixels are current tracked
+component pixels that were neither in the prior component nor newly selected.
+These photographic growth sets are independent of template attachment changes.
+
+With `auto_record=true`, the run is written to
+`<Pictures>/PixelMathExperiments/<experiment_name>/<unique-run-id>/`. It saves a
+PNG overlay for each digit/method/threshold, `fitting_history.csv` with transforms
+and coordinate sets (including cumulative transform deltas from the initial pose),
+`growth_measurements.csv`, `fixed_vs_progressive.csv`,
+`experiment_settings.txt`, and `results.zip` containing those files. Overlay
+colors are green for matched pixels, orange-red for unmatched observed pixels, blue
+for unsupported template pixels, and cyan for the ROI boundary. Coordinates and
+fitting always use source-image pixels, not GUI zoom; the original photograph and
+observed mask are not modified, and no proposed pixels are added.
+Without automatic recording, the GUI shows the first configured candidate's final
+progressive overlay and final attachment counts for all candidates. This is a fit
+comparison only: no winning digit or character recognition is reported. Each
+reference configuration must be run independently; the program does not use the
+known identity of either photographed zero.
+
 ## Tests
 
 ```powershell
@@ -282,6 +393,10 @@ or OCR/AI dependencies.
 - Logical groups are developer annotations and bounded geometric alternatives;
   results do not classify digits/operators, determine a correct grouping, or
   generalize from the initial examples.
+- Stage 1G compares manually defined templates through bounded, deterministic
+  transforms and records attachment history; a higher overlap is not recognition,
+  and the starter templates may not resemble the handwriting or discriminate
+  between digits.
 - Threshold analysis uses fixed values 40, 80, 120, 160, 200, and 240 and does not
   recommend a threshold.
 - Very large images still require memory for their RGB, grayscale, and mask data;

@@ -5,6 +5,7 @@ from __future__ import annotations
 import bisect
 import queue
 import tkinter as tk
+import traceback
 from array import array
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
@@ -53,6 +54,14 @@ from logical_grouping_instructions import (
     LogicalGroupingExperimentResult,
     parse_logical_grouping_config,
     run_logical_grouping_experiment,
+)
+from progressive_anchored_fitting import (
+    ProgressiveAnchoredFitConfig,
+    ProgressiveAnchoredFitResult,
+    ProgressiveAnchoredRecordingResult,
+    parse_progressive_anchored_fit_config,
+    record_progressive_anchored_fit,
+    run_progressive_anchored_fit,
 )
 from threshold_growth_instructions import (
     ThresholdGrowthConfig,
@@ -179,6 +188,7 @@ class PixelMathRecognitionLab:
         self.logical_candidate_tree_ids: list[str] = []
         self.template_active = False
         self.template_image: Image.Image | None = None
+        self.anchored_fit_overlay: Image.Image | None = None
         self.template_comparison: TemplateComparison | None = None
         self.template_baseline: TemplateComparison | None = None
         self.template_roi: Roi | None = None
@@ -302,6 +312,7 @@ class PixelMathRecognitionLab:
                 "Template Match",
                 "Growth History",
                 "Logical Grouping",
+                "Stage 1G Fit",
             ),
             state="readonly",
             width=19,
@@ -793,6 +804,19 @@ class PixelMathRecognitionLab:
             wraplength=300, justify=tk.LEFT,
         )
         self.experiment_status_label.pack(anchor=tk.W, pady=(4, 2))
+        error_row = ttk.Frame(panel)
+        error_row.pack(fill=tk.X, pady=(2, 0))
+        self.experiment_error_text = tk.Text(
+            error_row, height=5, width=34, wrap=tk.WORD, state=tk.DISABLED
+        )
+        self.experiment_error_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.copy_experiment_error_button = ttk.Button(
+            error_row,
+            text="Copy Error Details",
+            command=self._copy_experiment_error,
+            state=tk.DISABLED,
+        )
+        self.copy_experiment_error_button.pack(side=tk.LEFT, padx=(4, 0))
         progress_row = ttk.Frame(panel)
         progress_row.pack(fill=tk.X, pady=(2, 2))
         self.experiment_progress = ttk.Progressbar(
@@ -906,6 +930,10 @@ class PixelMathRecognitionLab:
                 config = parse_logical_grouping_config(
                     instruction_text, self.rgb_image.size
                 )
+            elif experiment_name == "progressive_anchored_fit":
+                config = parse_progressive_anchored_fit_config(
+                    instruction_text, self.rgb_image.size
+                )
             elif experiment_name == "threshold_growth":
                 config = parse_threshold_growth_config(
                     instruction_text, self.rgb_image.size
@@ -916,12 +944,19 @@ class PixelMathRecognitionLab:
                 )
         except ValueError as error:
             self.experiment_status_label.configure(text=f"Invalid configuration: {error}")
+            self._show_experiment_error(error)
             return
 
+        self._show_experiment_error(None)
         rgb_image = self.rgb_image
         grayscale_image = self.grayscale_image
         version = self._mask_version
-        cancellation = Event() if isinstance(config, ThresholdGrowthConfig) and config.auto_record else None
+        is_stage_1g = isinstance(config, ProgressiveAnchoredFitConfig)
+        auto_record = getattr(config, "auto_record", False)
+        cancellation = Event() if (
+            (isinstance(config, ThresholdGrowthConfig) and auto_record)
+            or is_stage_1g
+        ) else None
         self._experiment_cancel_event = cancellation
         self.experiment_job_running = True
         self.experiment_run_button.configure(state=tk.DISABLED)
@@ -932,7 +967,9 @@ class PixelMathRecognitionLab:
         self.experiment_status_label.configure(
             text=(
                 "Recording growth experiment…"
-                if cancellation is not None
+                if cancellation is not None and auto_record
+                else "Running Stage 1G fitting in background…"
+                if is_stage_1g
                 else "Running experiment in background…"
             )
         )
@@ -963,10 +1000,40 @@ class PixelMathRecognitionLab:
             text="Cancel requested; stopping after the current analysis step…"
         )
 
+    def _show_experiment_error(self, error: BaseException | None) -> None:
+        details = ""
+        if error is not None:
+            details = "".join(
+                traceback.format_exception(type(error), error, error.__traceback__)
+            ).strip()
+        self.experiment_error_text.configure(state=tk.NORMAL)
+        self.experiment_error_text.delete("1.0", tk.END)
+        if details:
+            self.experiment_error_text.insert("1.0", details)
+        self.experiment_error_text.configure(state=tk.DISABLED)
+        self.copy_experiment_error_button.configure(
+            state=tk.NORMAL if details else tk.DISABLED
+        )
+
+    def _copy_experiment_error(self) -> None:
+        details = self.experiment_error_text.get("1.0", "end-1c")
+        if not details:
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(details)
+        self.experiment_status_label.configure(
+            text="Error details copied. Paste them into your message."
+        )
+
     @staticmethod
     def _run_experiment_config(
         experiment_name: str,
-        config: ExperimentConfig | LogicalGroupingConfig | ThresholdGrowthConfig,
+        config: (
+            ExperimentConfig
+            | LogicalGroupingConfig
+            | ThresholdGrowthConfig
+            | ProgressiveAnchoredFitConfig
+        ),
         rgb_image: Image.Image,
         grayscale_image: Image.Image,
         cancel_event: Event | None = None,
@@ -976,6 +1043,8 @@ class PixelMathRecognitionLab:
         | LogicalGroupingExperimentResult
         | ThresholdGrowthExperimentResult
         | AutomaticGrowthRecordingResult
+        | ProgressiveAnchoredFitResult
+        | ProgressiveAnchoredRecordingResult
     ):
         if experiment_name == "logical_grouping":
             if not isinstance(config, LogicalGroupingConfig):
@@ -997,6 +1066,24 @@ class PixelMathRecognitionLab:
             return run_threshold_growth_experiment(
                 config, rgb_image, grayscale_image
             )
+        if experiment_name == "progressive_anchored_fit":
+            if not isinstance(config, ProgressiveAnchoredFitConfig):
+                raise TypeError("Stage 1G configuration was not parsed.")
+            if config.auto_record:
+                return record_progressive_anchored_fit(
+                    config,
+                    rgb_image,
+                    grayscale_image,
+                    cancel_event=cancel_event,
+                    progress_callback=progress_callback,
+                )
+            return run_progressive_anchored_fit(
+                config,
+                rgb_image,
+                grayscale_image,
+                cancel_event=cancel_event,
+                progress_callback=progress_callback,
+            )
         if not isinstance(config, ExperimentConfig):
             raise TypeError("Template matching configuration was not parsed.")
         return run_template_auto_align_experiment(
@@ -1006,6 +1093,7 @@ class PixelMathRecognitionLab:
     def _reset_template_match(self, message: str) -> None:
         self.template_active = False
         self.template_image = None
+        self.anchored_fit_overlay = None
         self.template_comparison = None
         self.template_baseline = None
         self.template_roi = None
@@ -1481,6 +1569,8 @@ class PixelMathRecognitionLab:
             image = self.growth_overlay
         elif mode == "Logical Grouping":
             image = self.rgb_image
+        elif mode == "Stage 1G Fit":
+            image = self.anchored_fit_overlay
         else:
             image = self.section_image
         if image is None:
@@ -2176,6 +2266,58 @@ class PixelMathRecognitionLab:
         self.experiment_status_label.configure(text=status)
         self._center_analysis_on_roi(config.roi, config.auto_zoom)
 
+    def _install_progressive_anchored_result(
+        self, result: ProgressiveAnchoredFitResult
+    ) -> None:
+        source_image = self.rgb_image
+        grayscale_image = self.grayscale_image
+        if source_image is None or grayscale_image is None:
+            raise RuntimeError("The source image is no longer available.")
+        config = result.config
+        self._mask_version += 1
+        if self._mask_after_id is not None:
+            self.root.after_cancel(self._mask_after_id)
+            self._mask_after_id = None
+        self.roi = config.roi
+        self.threshold.set(config.start_threshold)
+        self.binary_mask = create_binary_mask(
+            grayscale_image, config.start_threshold
+        )
+        display_overlay = source_image.copy()
+        display_overlay.paste(
+            result.display_overlay, (config.roi[0], config.roi[1])
+        )
+        self.anchored_fit_overlay = display_overlay
+        self._clear_growth_history()
+        self._clear_logical_grouping()
+        self._reset_merge_tracking()
+        self._reset_template_match(
+            "Stage 1G uses separate fixed and progressive template comparisons."
+        )
+        self.roi_label.configure(text=f"ROI: {format_roi_coordinates(config.roi)}")
+        self.clear_roi_button.configure(state=tk.NORMAL)
+        self.find_button.configure(state=tk.NORMAL)
+        self.analyze_button.configure(state=tk.NORMAL)
+        self.view_mode.set("Stage 1G Fit")
+        self._render_analysis()
+        self._center_analysis_on_roi(config.roi, auto_zoom=True)
+        final_lines = []
+        for digit in config.candidate_digits:
+            fixed = result.frames_for(digit, "fixed")[-1]
+            progressive = result.frames_for(digit, "progressive")[-1]
+            final_lines.append(
+                f"{digit}: fixed {len(fixed.matched_pixels)} matches; "
+                f"progressive {len(progressive.matched_pixels)} matches."
+            )
+        self.experiment_results_label.configure(
+            text="Stage 1G final attachment counts (comparisons, not recognition):\n"
+            + "\n".join(final_lines)
+        )
+        self.status_label.configure(
+            text="Stage 1G complete. The displayed overlay is the first configured "
+            "candidate's progressive fit; no candidate is declared recognized."
+        )
+
     def _center_analysis_on_roi(self, roi: Roi, auto_zoom: bool = False) -> None:
         if self.rgb_image is None:
             return
@@ -2609,6 +2751,15 @@ class PixelMathRecognitionLab:
                             )
                         )
                         continue
+                    if isinstance(result, ProgressiveAnchoredRecordingResult):
+                        self.experiment_progress.configure(value=100)
+                        self.experiment_status_label.configure(
+                            text=(
+                                "Stage 1G recording complete, but the analysis view changed. "
+                                f"Output: {result.output_directory}"
+                            )
+                        )
+                        continue
                     self.experiment_status_label.configure(
                         text="Experiment result discarded because the image or analysis region changed."
                     )
@@ -2625,13 +2776,22 @@ class PixelMathRecognitionLab:
                     self.experiment_cancel_button.configure(state=tk.DISABLED)
                     if isinstance(error, (RecordingCancelled, GrowthAnalysisCancelled)):
                         self.experiment_progress.configure(value=0)
+                        self._show_experiment_error(None)
                         self.experiment_status_label.configure(
-                            text="Recording canceled; incomplete output was removed."
+                            text=(
+                                "Experiment canceled; incomplete recording output, if any, "
+                                "was removed."
+                            )
                         )
                     else:
                         self.experiment_progress.configure(value=0)
+                        self._show_experiment_error(error)
                         self.experiment_status_label.configure(
-                            text=f"Experiment failed; previous results preserved: {error}"
+                            text=(
+                                f"Experiment failed: {type(error).__name__}: {error}. "
+                                "Full traceback is shown below; use Copy Error Details "
+                                "to share it."
+                            )
                         )
                     continue
                 if kind == "growth":
@@ -2752,6 +2912,22 @@ class PixelMathRecognitionLab:
                         text=(
                             f"Recording complete: {result.output_directory} "
                             f"({len(result.snapshot_files)} snapshots)."
+                        )
+                    )
+                elif isinstance(result, ProgressiveAnchoredRecordingResult):
+                    self._install_progressive_anchored_result(result.experiment)
+                    self.experiment_status_label.configure(
+                        text=(
+                            f"Stage 1G recording complete: {result.output_directory} "
+                            f"({result.overlay_count} candidate overlays)."
+                        )
+                    )
+                elif isinstance(result, ProgressiveAnchoredFitResult):
+                    self._install_progressive_anchored_result(result)
+                    self.experiment_status_label.configure(
+                        text=(
+                            "Stage 1G complete without saving files. Add "
+                            "auto_record=true to create overlays and reports."
                         )
                     )
                 elif isinstance(result, ThresholdGrowthExperimentResult):
